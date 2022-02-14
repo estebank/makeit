@@ -11,21 +11,22 @@ struct Foo<'a, T: std::fmt::Debug> {
 pub fn x() {
     let x: Foo<_> = Foo::builder().set_bar(&()).set_baz(2).build();
     println!("{:?} {:?}", x.bar, x.baz);
-    let x = Foo::builder().set_bar(&1).build();
+    let x: Foo<_> = Foo::builder().set_bar(&()).build();
     println!("{:?} {:?}", x.bar, x.baz);
 }
 
 #[derive(Builder)]
 struct Bar {
     bar: u32,
-    baz: i32,
+    #[default]
+    baz: Option<i32>,
 }
 
 pub fn y() {
-    let x: Bar = Bar::builder().set_bar(1).set_baz(2).build();
+    let x: Bar = Bar::builder().set_bar(1).set_baz(Some(2)).build();
     println!("{:?} {:?}", x.bar, x.baz);
     let _x = Bar::builder();
-    let _x = Bar::builder().set_bar(1);
+    let _x = Bar::builder().set_bar(1).build();
 }
 
 fn main() {

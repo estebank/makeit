@@ -3,44 +3,93 @@ extern crate quote;
 
 use proc_macro::TokenStream;
 use quote::ToTokens;
-use syn::{ItemStruct, Ident, GenericParam, Visibility};
+use syn::{GenericParam, ItemStruct, Visibility};
 
-// struct Generics {
-//     build_generics_decl: Vec<TokenStream>,
-//     build_generics_use: Vec<Ident>,
-// }
+fn capitalize(s: &str) -> String {
+    let mut c = s.chars();
+    match c.next() {
+        None => String::new(),
+        Some(ch) => ch.to_uppercase().collect::<String>() + c.as_str(),
+    }
+}
 
 #[proc_macro_derive(Builder, attributes(default))]
 pub fn derive_builder(input: TokenStream) -> TokenStream {
     let input: ItemStruct = syn::parse(input).unwrap();
     let struct_name = &input.ident;
+    // You can't accuse me of being original. 🤷‍♂️
     let builder_name = format_ident!("{}Builder", input.ident);
+    // We'll nest the entirety of the builder's helper types in a private module so that they don't
+    // leak into the user's scope.
+    let mod_name = format_ident!("{}Fields", builder_name);
 
     let struct_generics = input.generics.params.iter().collect::<Vec<_>>();
-    // input.generics.params.iter().map(|param| match param {
-    //     GenericParam::Type(p) => {p.ident},
-    //     GenericParam::Lifetime(p) => {},
-    //     GenericParam::Const(p) => {},
-    // });
-    let set_fields_generics = input.fields.iter().enumerate().map(|(i, f)| format_ident!("field_{}", match &f.ident {
-        Some(field) => field.to_string(),
-        None => i.to_string(),
-    })).collect::<Vec<_>>();
+    // The type parameter names representing each field of the type being built.
+    let mut set_fields_generics = vec![];
+    // The type names representing fields that have been initialized.
+    let mut all_set = vec![];
+    // The type names representing fields that have not yet been initialized.
+    let mut all_unset = vec![];
 
-    let use_struct_generics = input.generics.params.iter().map(|param| match param {
-        GenericParam::Type(p) => {
-            let ident = &p.ident;
-            quote!(#ident)
+    // These are the generic parameters for the `impl` that lets the user call `.build()`. They
+    // normally would all have to be "field_foo_set" and need no params beyond the underlying
+    // type's, but we support default values so we need to account for them to let people build
+    // without setting those.
+    let mut buildable_generics = vec![];
+    let mut buildable_generics_use = vec![];
+
+    for (i, field) in input.fields.iter().enumerate() {
+        // We'll use these as the name of the type parameters for the builder's fields.
+        let field_name = format_ident!(
+            "{}",
+            match &field.ident {
+                Some(field) => capitalize(&field.to_string()),
+                None => format!("Field{}", i), // Idents can't start with numbers.
+            }
+        );
+        // We'll use these as the base for the types representing the builder state.
+        let field_generic_name = format_ident!(
+            "Field{}",
+            match &field.ident {
+                Some(field) => capitalize(&field.to_string()),
+                None => format!("{}", i),
+            }
+        );
+        let set_field_generic_name = format_ident!("{}Set", field_name);
+        let unset_field_generic_name = format_ident!("{}Unset", field_name);
+
+        if field.attrs.iter().any(|attr| attr.path.is_ident("default")) {
+            buildable_generics.push(field_generic_name.clone());
+            buildable_generics_use.push(field_generic_name.clone());
+        } else {
+            buildable_generics_use.push(set_field_generic_name.clone());
         }
-        GenericParam::Lifetime(p) => {
-            let lt = &p.lifetime;
-            quote!(#lt)
-        }
-        GenericParam::Const(p) => {
-            let ident = &p.ident;
-            quote!(#ident)
-        }
-    }).collect::<Vec<_>>();
+        set_fields_generics.push(field_generic_name);
+        all_set.push(set_field_generic_name);
+        all_unset.push(unset_field_generic_name);
+    }
+
+    // `input.generics.params` contains bounds. Here we get only the params without the bounds for
+    // use in type uses, not `impl` declarations.
+    let use_struct_generics = input
+        .generics
+        .params
+        .iter()
+        .map(|param| match param {
+            GenericParam::Type(p) => {
+                let ident = &p.ident;
+                quote!(#ident)
+            }
+            GenericParam::Lifetime(p) => {
+                let lt = &p.lifetime;
+                quote!(#lt)
+            }
+            GenericParam::Const(p) => {
+                let ident = &p.ident;
+                quote!(#ident)
+            }
+        })
+        .collect::<Vec<_>>();
 
     let comma = if use_struct_generics.is_empty() {
         quote!()
@@ -49,42 +98,51 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
     };
 
     let constrained_generics = quote!(<#(#struct_generics),* #comma #(#set_fields_generics),*>);
-
     let use_generics = quote!(<#(#use_struct_generics),* #comma #(#set_fields_generics),*>);
-    // let all_set = input.fields.iter().enumerate().map(|_| format_ident!("field_{}_set"));
-    let all_set = input.fields.iter().enumerate().map(|(i, f)| format_ident!("field_{}_set", match &f.ident {
-        Some(field) => field.to_string(),
-        None => i.to_string(),
-    })).collect::<Vec<_>>();
-    // let all_unset = set_fields_generics.iter().enumerate().map(|_| format_ident!(::makeit::Unset));
-    let all_unset = input.fields.iter().enumerate().map(|(i, f)| format_ident!("field_{}_unset", match &f.ident {
-        Some(field) => field.to_string(),
-        None => i.to_string(),
-    })).collect::<Vec<_>>();
+
+    // Construct each of the setter methods. These desugar roughly to the following signature:
+    //
+    //   fn set_<field_name>(self, value: <field_type>) -> <Type>Builder
+    //
     let setters = input.fields.iter().enumerate().map(|(i, f)| {
         let field = match &f.ident {
             Some(field) => quote!(#field),
-            None => quote!(i),
+            None => quote!(#i),
         };
-        let method_name = format_ident!("set_{}", match &f.ident {
-            Some(field) => field.to_string(),
-            None => i.to_string(),
-        });
+        let method_name = format_ident!("set_{}", field.to_string());
         let inner_method_name = format_ident!("inner_{}", method_name);
-        let decl_generics = set_fields_generics.iter().enumerate().filter(|(j, _)| i!=*j).map(|(_, f)| f);
+        let decl_generics = set_fields_generics
+            .iter()
+            .enumerate()
+            .filter(|(j, _)| i!=*j)
+            .map(|(_, f)| f);
         let decl_generics = quote!(<#(#struct_generics),* #comma #(#decl_generics),*>);
-        let unset_generics = set_fields_generics.iter().enumerate().map(|(j, f)| if i == j {
-            let f = format_ident!("{}_unset", f);
-            quote!(#f)
-        } else {
-            quote!(#f)
-        });
+        let unset_generics = set_fields_generics
+            .iter()
+            .zip(input.fields.iter())
+            .enumerate()
+            .map(|(j, (g, f))| if i == j {
+                // FIXME: dedup this logic.
+                let field_name = format_ident!("{}", match &f.ident {
+                    Some(field) => capitalize(&field.to_string()),
+                    None => format!("Field{}", i),
+                });
+                let f = format_ident!("{}Unset", field_name);
+                quote!(#f)
+            } else {
+                quote!(#g)
+            });
         let unset_generics = quote!(<#(#use_struct_generics),* #comma #(#unset_generics),*>);
-        let set_generics = set_fields_generics.iter().enumerate().map(|(j, f)| if i == j {
-            let f = format_ident!("{}_set", f);
+        let set_generics = set_fields_generics
+            .iter().zip(input.fields.iter()).enumerate().map(|(j, (g, f))| if i == j {
+            let field_name = format_ident!("{}", match &f.ident {
+                Some(field) => capitalize(&field.to_string()),
+                None => format!("Field{}", i),
+            });
+            let f = format_ident!("{}Set", field_name);
             quote!(#f)
         } else {
-            quote!(#f)
+            quote!(#g)
         });
         let set_generics = quote!(<#(#use_struct_generics),* #comma #(#set_generics),*>);
         let ty = &f.ty;
@@ -115,14 +173,14 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
     let field_ptr_methods = input.fields.iter().enumerate().map(|(i, f)| {
         let field = match &f.ident {
             Some(field) => quote!(#field),
-            None => quote!(i),
+            None => quote!(#i),
         };
-        let method_name = format_ident!("ptr_{}", match &f.ident {
-            Some(field) => field.to_string(),
-            None => i.to_string(),
-        });
+        let method_name = format_ident!("ptr_{}", field.to_string());
         let ty = &f.ty;
         quote! {
+            /// Returns a mutable pointer to a field of the type being built. This is useful if the
+            /// initialization requires subtle unsafe shenanigans. You will need to call
+            /// `.unsafe_build()` after ensuring all of the fields have been initialized.
             #[must_use]
             pub unsafe fn #method_name(&mut self) -> *mut #ty {
                 let inner = self.inner.as_mut_ptr();
@@ -131,7 +189,6 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
         }
     });
 
-    let mod_name = format_ident!("__{}", builder_name);
     let vis = match &input.vis {
         // For private `struct`s we need to change teh visibility of their builders to be
         // accessible from their scope without leaking as `pub`.
@@ -144,16 +201,39 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
             Some(field) => format_ident!("inner_set_{}", field),
             None => format_ident!("inner_set_{}", i),
         };
-        f.attrs.iter()
+        f.attrs
+            .iter()
             .find(|attr| attr.path.is_ident("default"))
             .map(|attr| {
-                let default= &attr.tokens;
-                quote!(builder.#field(#default);)
+                let default = &attr.tokens;
+                if default.is_empty() {
+                    quote!(builder.#field(::std::default::Default::default());)
+                } else {
+                    quote!(builder.#field(#default);)
+                }
             })
     });
+    // Construct the params for the `impl` item that provides the `build` method. Normally it would
+    // be straightforward: you just specify that all the type params corresponding to fields are
+    // set to the `Set` state, but that doesn't account for defaulted type params.
     let build_generics = input.generics.params.iter().collect::<Vec<_>>();
-    // let non_default_set = all_set.iter().
-    let build_use_generics = quote!(<#(#use_struct_generics),* #comma #(#all_set),*>);
+    let build_generics = if buildable_generics.is_empty() {
+        quote!(<#(#build_generics),*>)
+    } else {
+        let comma = if build_generics.is_empty() {
+            quote!()
+        } else {
+            quote!(,)
+        };
+        quote!(<#(#build_generics),* #comma #(#buildable_generics),*>)
+    };
+    let build_use_generics =
+        quote!(<#(#use_struct_generics),* #comma #(#buildable_generics_use),*>);
+
+    let builder_assoc_type = quote! {
+        type Builder = #builder_name<#(#use_struct_generics),* #comma #(#all_unset),*>;
+    };
+
     let input = quote! {
     #[allow(non_snake_case)]
     #[deny(unused_must_use, clippy::pedantic)]
@@ -171,10 +251,12 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
         #(pub struct #all_unset;)*
 
         impl<#(#struct_generics),*> ::makeit::Buildable for #struct_name <#(#use_struct_generics),*> {
-            type Builder = #builder_name<#(#use_struct_generics),* #comma #(#all_unset),*>;
+            #builder_assoc_type
 
-            #[allow(unused_parens)]
+            /// Returns a builder that lets you initialize `Self` field by field in a zero-cost,
+            /// type-safe manner.
             #[must_use]
+            #[allow(unused_parens)]
             fn builder() -> Self::Builder {
                 let mut builder = #builder_name {
                     inner: unsafe {
@@ -187,22 +269,28 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
             }
         }
 
-        // TODO: account for fields with `default` set in the type params
-        impl<#(#build_generics),*> #builder_name #build_use_generics {
+        impl #build_generics #builder_name #build_use_generics {
+            /// Finalize the builder.
             #[must_use]
             pub fn build(self) -> #struct_name<#(#use_struct_generics),*> {
                 // This method is only callable if all of the fields have been initialized, making
                 // the underlying value at `inner` correctly formed.
-                unsafe { self.inner.assume_init() }
+                unsafe { self.unsafe_build() }
             }
         }
-        
+
         #(#setters)*
 
         impl #constrained_generics #builder_name #use_generics {
 
             #(#field_ptr_methods)*
 
+            /// HERE BE DRAGONS!
+            ///
+            /// # Safety
+            ///
+            /// You're dealing with `MaybeUninit`. If you have to research what that is, you don't
+            /// want this.
             #[must_use]
             pub unsafe fn maybe_uninit(self) -> ::core::mem::MaybeUninit<#struct_name<#(#use_struct_generics),*>> {
                 self.inner
@@ -221,113 +309,3 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
 
     TokenStream::from(input.into_token_stream())
 }
-
-
-
-// use std::mem::MaybeUninit;
-// use std::ptr::addr_of_mut;
-// use std::marker::PhantomData;
-
-// struct Role {
-//     name: String,
-//     disabled: bool,
-// }
-
-// struct Set;
-// struct Unset;
-
-// struct RoleBuilder<NameSet, DisabledSet> {
-//     inner: MaybeUninit<Role>,
-//     name: PhantomData<NameSet>,
-//     disabled: PhantomData<DisabledSet>,
-// }
-
-// impl<A, B> RoleBuilder<A, B> {
-//     unsafe fn name_ptr(&mut self) -> *mut String {
-//         let role = self.inner.as_mut_ptr();
-//         addr_of_mut!((*role).name)
-//     }
-
-//     unsafe fn disabled_ptr(&mut self) -> *mut bool {
-//         let role = self.inner.as_mut_ptr();
-//         addr_of_mut!((*role).disabled)
-//     }
-
-//     unsafe fn maybe_uninit(self) -> MaybeUninit<Role> {
-//         self.inner
-//     }
-
-//     /// Only call if you have set a field through their mutable pointer, instead
-//     /// of using the type-safe builder. It is your responsibility to ensure that
-//     /// all fields have been set before doing this.
-//     unsafe fn unsafe_build(self) -> Role {
-//         self.inner.assume_init()
-//     }
-// }
-
-// impl<A> RoleBuilder<A, Unset> {
-//     fn set_disabled(mut self, disabled: bool) -> RoleBuilder<A, Set> {
-//         unsafe {
-//             let role = self.inner.as_mut_ptr();
-//             addr_of_mut!((*role).disabled).write(disabled);
-//             std::mem::transmute(self)
-//         }
-//     }
-// }
-
-// impl<B> RoleBuilder<Unset, B> {
-//     fn set_name(mut self, name: String) -> RoleBuilder<Set, B> {
-//         unsafe {
-//             let role = self.inner.as_mut_ptr();
-//             addr_of_mut!((*role).name).write(name);
-//             std::mem::transmute(self)
-//         }
-//     }
-// }
-
-// impl RoleBuilder<Set, Set> {
-//     fn build(mut self) -> Role {
-//         unsafe {
-//             self.inner.assume_init()
-//         }
-//     }
-// }
-
-// impl Buildable for Role {
-//     type Builder = RoleBuilder<Unset, Unset>;
-//     fn builder() -> Self::Builder {
-//         RoleBuilder {
-//             inner: unsafe {
-//                 MaybeUninit::<Role>::uninit()
-//             },
-//             name: PhantomData,
-//             disabled: PhantomData,
-//         }
-//     }
-// }
-
-// fn main() {
-//     let role = Role::builder()
-//         .set_name("basic".to_string())
-//         .set_disabled(true)
-//         .build();
-//     println!("{} ({})", role.name, role.disabled);
-    
-//     let mut role = Role::builder()
-//         .set_name("basic".to_string());
-//     let role = unsafe {
-//         role.disabled_ptr().write(false);
-//         role.unsafe_build()
-//     };
-//     println!("{} ({})", role.name, role.disabled);
-    
-//     let role = unsafe {
-//         let mut uninit = MaybeUninit::<Role>::uninit();
-//         let role = uninit.as_mut_ptr();
-//         addr_of_mut!((*role).name).write("basic".to_string());
-//         addr_of_mut!((*role).disabled).write(false);
-//         uninit.assume_init()
-//     };
-
-//     println!("{} ({})", role.name, role.disabled);
-// }
