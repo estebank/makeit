@@ -1,0 +1,25 @@
+[package]
+name = "makeit-derive"
+version = "0.1.0"
+edition = "2018"
+authors = ["Esteban Küber <esteban@kuber.com.ar>"]
+license = "MIT"
+description = "A macro crate for makeit. Do not use this crate directly."
+repository = "https://github.com/estebank/makeit"
+homepage = "https://github.com/estebank/makeit"
+categories = ["development-tools", "rust-patterns"]
+keywords = [
+  "builder",
+  "derive",
+  "macro",
+  "pattern",
+  "struct"
+]
+
+[dependencies]
+proc-macro2 = "1.0"
+syn = { version = "1.0", features = ["full"] }
+quote = "1.0"
+
+[lib]
+proc-macro = true

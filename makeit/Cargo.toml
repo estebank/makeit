@@ -1,0 +1,20 @@
+[package]
+name = "makeit"
+version = "0.1.0"
+edition = "2018"
+authors = ["Esteban Küber <esteban@kuber.com.ar>"]
+license = "MIT"
+description = "Compile-time checked Builder pattern `derive` macro with zero-memory overhead"
+repository = "https://github.com/estebank/makeit"
+homepage = "https://github.com/estebank/makeit"
+categories = ["development-tools", "rust-patterns"]
+keywords = [
+  "builder",
+  "derive",
+  "macro",
+  "pattern",
+  "struct"
+]
+
+[dependencies]
+makeit-derive = { version = "*", path = "../makeit-derive" }
