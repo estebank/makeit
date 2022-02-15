@@ -1,6 +1,6 @@
 [package]
 name = "makeit"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2018"
 authors = ["Esteban Küber <esteban@kuber.com.ar>"]
 license = "MIT"
@@ -17,4 +17,4 @@ keywords = [
 ]
 
 [dependencies]
-makeit-derive = { version = "0.1.0", path = "../makeit-derive" }
+makeit-derive = { version = "0.1.1", path = "../makeit-derive" }

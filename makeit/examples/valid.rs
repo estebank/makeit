@@ -25,8 +25,20 @@ struct Bar {
 pub fn y() {
     let x: Bar = Bar::builder().set_bar(1).set_baz(Some(2)).build();
     println!("{:?} {:?}", x.bar, x.baz);
-    let _x = Bar::builder();
-    let _x = Bar::builder().set_bar(1).build();
+    let x = Bar::builder().set_bar(1).build();
+    println!("{:?} {:?}", x.bar, x.baz);
+}
+
+#[derive(Builder)]
+struct Baz<'a, T>(&'a T, #[default] Option<i32>)
+where
+    T: std::fmt::Debug;
+
+pub fn z() {
+    let x = Baz::builder().set_0(&1).set_1(Some(2)).build();
+    println!("{:?} {:?}", x.0, x.1);
+    let x = Baz::builder().set_0(&1).build();
+    println!("{:?} {:?}", x.0, x.1);
 }
 
 fn main() {

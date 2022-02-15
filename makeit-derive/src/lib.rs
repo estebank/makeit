@@ -3,6 +3,7 @@ extern crate quote;
 
 use proc_macro::TokenStream;
 use quote::ToTokens;
+use syn::spanned::Spanned;
 use syn::{GenericParam, ItemStruct, Visibility};
 
 fn capitalize(s: &str) -> String {
@@ -38,6 +39,8 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
     let mut buildable_generics = vec![];
     let mut buildable_generics_use = vec![];
 
+    let mut default_where_clauses = vec![];
+
     for (i, field) in input.fields.iter().enumerate() {
         // We'll use these as the name of the type parameters for the builder's fields.
         let field_name = format_ident!(
@@ -59,8 +62,10 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
         let unset_field_generic_name = format_ident!("{}Unset", field_name);
 
         if field.attrs.iter().any(|attr| attr.path.is_ident("default")) {
+            let ty = &field.ty;
             buildable_generics.push(field_generic_name.clone());
             buildable_generics_use.push(field_generic_name.clone());
+            default_where_clauses.push(quote_spanned!(ty.span() => #ty: ::std::default::Default));
         } else {
             buildable_generics_use.push(set_field_generic_name.clone());
         }
@@ -98,6 +103,12 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
     };
 
     let constrained_generics = quote!(<#(#struct_generics),* #comma #(#set_fields_generics),*>);
+    let where_clause = &input.generics.where_clause;
+    let where_clause = if where_clause.is_some() {
+        quote!(#where_clause, #(#default_where_clauses),*)
+    } else {
+        quote!(where #(#default_where_clauses),*)
+    };
     let use_generics = quote!(<#(#use_struct_generics),* #comma #(#set_fields_generics),*>);
 
     // Construct each of the setter methods. These desugar roughly to the following signature:
@@ -105,11 +116,14 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
     //   fn set_<field_name>(self, value: <field_type>) -> <Type>Builder
     //
     let setters = input.fields.iter().enumerate().map(|(i, f)| {
-        let field = match &f.ident {
-            Some(field) => quote!(#field),
-            None => quote!(#i),
+
+        let (field, method_name) = match &f.ident {
+            Some(field) => (quote!(#field), format_ident!("set_{}", field)),
+            None => {
+                let i = syn::Index::from(i);
+                (quote!(#i), format_ident!("set_{}", i))
+            }
         };
-        let method_name = format_ident!("set_{}", field.to_string());
         let inner_method_name = format_ident!("inner_{}", method_name);
         let decl_generics = set_fields_generics
             .iter()
@@ -147,7 +161,7 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
         let set_generics = quote!(<#(#use_struct_generics),* #comma #(#set_generics),*>);
         let ty = &f.ty;
         quote! {
-            impl #decl_generics #builder_name #unset_generics {
+            impl #decl_generics #builder_name #unset_generics #where_clause {
                 #[must_use]
                 pub fn #method_name(mut self, value: #ty) -> #builder_name #set_generics {
                     self.#inner_method_name(value);
@@ -171,11 +185,13 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
         }
     });
     let field_ptr_methods = input.fields.iter().enumerate().map(|(i, f)| {
-        let field = match &f.ident {
-            Some(field) => quote!(#field),
-            None => quote!(#i),
+        let (field, method_name) = match &f.ident {
+            Some(field) => (quote!(#field), format_ident!("ptr_{}", i)),
+            None => {
+                let i = syn::Index::from(i);
+                (quote!(#i), format_ident!("ptr_{}", i))
+            }
         };
-        let method_name = format_ident!("ptr_{}", field.to_string());
         let ty = &f.ty;
         quote! {
             /// Returns a mutable pointer to a field of the type being built. This is useful if the
@@ -235,76 +251,78 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
     };
 
     let input = quote! {
-    #[allow(non_snake_case)]
-    #[deny(unused_must_use, clippy::pedantic)]
-    mod #mod_name {
-        use super::#struct_name;
+        #[allow(non_snake_case)]
+        #[deny(unused_must_use, clippy::pedantic)]
+        mod #mod_name {
+            use super::*;
 
-        #[must_use]
-        #[repr(transparent)]
-        #vis struct #builder_name #constrained_generics {
-            inner: ::core::mem::MaybeUninit<#struct_name<#(#use_struct_generics),*>>,
-            __fields: ::core::marker::PhantomData<(#(#set_fields_generics),*)>,
-        }
-
-        #(pub struct #all_set;)*
-        #(pub struct #all_unset;)*
-
-        impl<#(#struct_generics),*> ::makeit::Buildable for #struct_name <#(#use_struct_generics),*> {
-            #builder_assoc_type
-
-            /// Returns a builder that lets you initialize `Self` field by field in a zero-cost,
-            /// type-safe manner.
             #[must_use]
-            #[allow(unused_parens)]
-            fn builder() -> Self::Builder {
-                let mut builder = #builder_name {
-                    inner: unsafe {
-                        ::core::mem::MaybeUninit::<Self>::uninit()
-                    },
-                    __fields: ::core::marker::PhantomData,
-                };
-                #(#defaults)*
-                builder
-            }
-        }
-
-        impl #build_generics #builder_name #build_use_generics {
-            /// Finalize the builder.
-            #[must_use]
-            pub fn build(self) -> #struct_name<#(#use_struct_generics),*> {
-                // This method is only callable if all of the fields have been initialized, making
-                // the underlying value at `inner` correctly formed.
-                unsafe { self.unsafe_build() }
-            }
-        }
-
-        #(#setters)*
-
-        impl #constrained_generics #builder_name #use_generics {
-
-            #(#field_ptr_methods)*
-
-            /// HERE BE DRAGONS!
-            ///
-            /// # Safety
-            ///
-            /// You're dealing with `MaybeUninit`. If you have to research what that is, you don't
-            /// want this.
-            #[must_use]
-            pub unsafe fn maybe_uninit(self) -> ::core::mem::MaybeUninit<#struct_name<#(#use_struct_generics),*>> {
-                self.inner
+            #[repr(transparent)]
+            #vis struct #builder_name #constrained_generics #where_clause {
+                inner: ::core::mem::MaybeUninit<#struct_name<#(#use_struct_generics),*>>,
+                __fields: ::core::marker::PhantomData<(#(#set_fields_generics),*)>,
             }
 
-            /// Only call if you have set a field through their mutable pointer, instead
-            /// of using the type-safe builder. It is your responsibility to ensure that
-            /// all fields have been set before doing this.
-            #[must_use]
-            pub unsafe fn unsafe_build(self) -> #struct_name<#(#use_struct_generics),*> {
-                self.inner.assume_init()
+            #(pub struct #all_set;)*
+            #(pub struct #all_unset;)*
+
+            impl<#(#struct_generics),*> ::makeit::Buildable for #struct_name <#(#use_struct_generics),*>
+            #where_clause
+            {
+                #builder_assoc_type
+
+                /// Returns a builder that lets you initialize `Self` field by field in a zero-cost,
+                /// type-safe manner.
+                #[must_use]
+                #[allow(unused_parens)]
+                fn builder() -> Self::Builder {
+                    let mut builder = #builder_name {
+                        inner: unsafe {
+                            ::core::mem::MaybeUninit::<Self>::uninit()
+                        },
+                        __fields: ::core::marker::PhantomData,
+                    };
+                    #(#defaults)*
+                    builder
+                }
+            }
+
+            impl #build_generics #builder_name #build_use_generics #where_clause {
+                /// Finalize the builder.
+                #[must_use]
+                pub fn build(self) -> #struct_name<#(#use_struct_generics),*> {
+                    // This method is only callable if all of the fields have been initialized, making
+                    // the underlying value at `inner` correctly formed.
+                    unsafe { self.unsafe_build() }
+                }
+            }
+
+            #(#setters)*
+
+            impl #constrained_generics #builder_name #use_generics #where_clause {
+
+                #(#field_ptr_methods)*
+
+                /// HERE BE DRAGONS!
+                ///
+                /// # Safety
+                ///
+                /// You're dealing with `MaybeUninit`. If you have to research what that is, you don't
+                /// want this.
+                #[must_use]
+                pub unsafe fn maybe_uninit(self) -> ::core::mem::MaybeUninit<#struct_name<#(#use_struct_generics),*>> {
+                    self.inner
+                }
+
+                /// Only call if you have set a field through their mutable pointer, instead
+                /// of using the type-safe builder. It is your responsibility to ensure that
+                /// all fields have been set before doing this.
+                #[must_use]
+                pub unsafe fn unsafe_build(self) -> #struct_name<#(#use_struct_generics),*> {
+                    self.inner.assume_init()
+                }
             }
         }
-    }
     };
 
     TokenStream::from(input.into_token_stream())
