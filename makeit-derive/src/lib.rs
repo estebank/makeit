@@ -225,6 +225,16 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
                 if default.is_empty() {
                     quote!(builder.#field(::std::default::Default::default());)
                 } else {
+                    let mut default_iter = default.clone().into_iter();
+                    let default = match [default_iter.next(), default_iter.next()] {
+                        [Some(proc_macro2::TokenTree::Group(group)), None]
+                            if group.delimiter() == proc_macro2::Delimiter::Parenthesis =>
+                        {
+                            group.stream()
+                        }
+                        _ => syn::Error::new_spanned(default, "expected `#[default(…)]`")
+                            .into_compile_error(),
+                    };
                     quote!(builder.#field(#default);)
                 }
             })
