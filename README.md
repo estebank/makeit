@@ -1,5 +1,5 @@
 # Compile-time checked Builder pattern `derive` macro with zero-memory overhead
->  *This is very much a work-in-progress. PRs welcome to bring this to production quality welcome.*
+>  *This is very much a work-in-progress. PRs to bring this to production quality are welcome.*
 
 The [Builder Pattern](https://en.wikipedia.org/wiki/Builder_pattern) is a design pattern to allow the construction of complex types one field at a time by calling methods on a builder type. This crate provides a `derive` macro that allows you to annotate any `struct` to create a type-level state machine that requires all mandatory fields to be set once and only at compile-time (otherwise you won't be able to call `.build()` on it).
 
@@ -27,5 +27,5 @@ The created `Builder` type has zero-memory overhead because it uses a [`MaybeUni
 
 ## Error messages
 One of the main downsides of the typestate pattern are inscrutable error messages. However, the since this crate generates type-state parameters with readable names, rustc can produce readable error messages:
-![image](https://user-images.githubusercontent.com/492903/154131011-1bb5d95b-b00d-4ce6-8683-d86a01edd58f.png)
+![Screenshot of rustc error messages, showing how the compiler tells you when you have an unset or double-set field](https://user-images.githubusercontent.com/492903/154131011-1bb5d95b-b00d-4ce6-8683-d86a01edd58f.png)
 
