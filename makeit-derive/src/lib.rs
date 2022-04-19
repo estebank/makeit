@@ -61,11 +61,21 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
         let set_field_generic_name = format_ident!("{}Set", field_name);
         let unset_field_generic_name = format_ident!("{}Unset", field_name);
 
-        if field.attrs.iter().any(|attr| attr.path.is_ident("default")) {
+        let default_attr = field.attrs.iter().find_map(|attr| {
+            if attr.path.is_ident("default") {
+                Some(attr.tokens.is_empty())
+            } else {
+                None
+            }
+        });
+        if let Some(default_is_empty) = default_attr {
             let ty = &field.ty;
             buildable_generics.push(field_generic_name.clone());
             buildable_generics_use.push(field_generic_name.clone());
-            default_where_clauses.push(quote_spanned!(ty.span() => #ty: ::std::default::Default));
+            if default_is_empty {
+                default_where_clauses
+                    .push(quote_spanned!(ty.span() => #ty: ::std::default::Default));
+            }
         } else {
             buildable_generics_use.push(set_field_generic_name.clone());
         }
