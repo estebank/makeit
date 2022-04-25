@@ -6,7 +6,8 @@ use quote::ToTokens;
 use syn::spanned::Spanned;
 use syn::{GenericParam, ItemStruct, Visibility};
 
-fn capitalize(s: &str) -> String {
+fn capitalize(mut s: &str) -> String {
+    s = s.trim_start_matches("r#");
     let mut c = s.chars();
     match c.next() {
         None => String::new(),
