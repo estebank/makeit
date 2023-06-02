@@ -62,12 +62,10 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
         let set_field_generic_name = format_ident!("{}Set", field_name);
         let unset_field_generic_name = format_ident!("{}Unset", field_name);
 
-        let default_attr = field.attrs.iter().find_map(|attr| {
-            if attr.path().is_ident("default") {
-                Some(attr.to_token_stream().is_empty())
-            } else {
-                None
-            }
+        let default_attr = field.attrs.iter().find_map(|attr| match &attr.meta {
+            syn::Meta::Path(path) if path.is_ident("default") => Some(true),
+            syn::Meta::List(syn::MetaList { path, .. }) if path.is_ident("default") => Some(false),
+            _ => None,
         });
         if let Some(default_is_empty) = default_attr {
             let ty = &field.ty;
@@ -228,27 +226,25 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
             Some(field) => format_ident!("inner_set_{}", field),
             None => format_ident!("inner_set_{}", i),
         };
-        f.attrs
-            .iter()
-            .find(|attr| attr.path().is_ident("default"))
-            .map(|attr| {
-                let default = attr.to_token_stream();
-                if default.is_empty() {
-                    quote!(builder.#field(::std::default::Default::default());)
-                } else {
-                    let mut default_iter = default.clone().into_iter();
-                    let default = match [default_iter.next(), default_iter.next()] {
-                        [Some(proc_macro2::TokenTree::Group(group)), None]
-                            if group.delimiter() == proc_macro2::Delimiter::Parenthesis =>
-                        {
-                            group.stream()
-                        }
-                        _ => syn::Error::new_spanned(default, "expected `#[default(…)]`")
-                            .into_compile_error(),
-                    };
-                    quote!(builder.#field(#default);)
-                }
-            })
+        f.attrs.iter().find_map(|attr| match &attr.meta {
+            syn::Meta::Path(path) if path.is_ident("default") => {
+                Some(quote!(builder.#field(::std::default::Default::default());))
+            }
+            syn::Meta::List(syn::MetaList { path, tokens, .. }) if path.is_ident("default") => {
+                let mut default_iter = tokens.clone().into_iter();
+                let default = match [default_iter.next(), default_iter.next()] {
+                    [Some(proc_macro2::TokenTree::Group(group)), None]
+                        if group.delimiter() == proc_macro2::Delimiter::Parenthesis =>
+                    {
+                        group.stream()
+                    }
+                    _ => syn::Error::new_spanned(tokens, "expected `#[default(…)]`")
+                        .into_compile_error(),
+                };
+                Some(quote!(builder.#field(#default);))
+            }
+            _ => None,
+        })
     });
     // Construct the params for the `impl` item that provides the `build` method. Normally it would
     // be straightforward: you just specify that all the type params corresponding to fields are
