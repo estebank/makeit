@@ -2,16 +2,20 @@
 extern crate quote;
 
 use proc_macro::TokenStream;
+use proc_macro2::Ident;
 use quote::ToTokens;
 use syn::spanned::Spanned;
 use syn::{GenericParam, ItemStruct, Visibility};
 
-fn capitalize(mut s: &str) -> String {
-    s = s.trim_start_matches("r#");
-    let mut c = s.chars();
-    match c.next() {
+fn capitalize(ident: &Ident) -> String {
+    let ident = ident.to_string();
+    let trimmed = ident.trim_start_matches("r#");
+
+    let mut chars = trimmed.chars();
+    match chars.next() {
+        // FIXME: Should not be possible for an identifier. Return an error or use unwrap_unchecked?
         None => String::new(),
-        Some(ch) => ch.to_uppercase().collect::<String>() + c.as_str(),
+        Some(ch) => ch.to_uppercase().chain(chars).collect(),
     }
 }
 
@@ -47,7 +51,7 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
         let field_name = format_ident!(
             "{}",
             match &field.ident {
-                Some(field) => capitalize(&field.to_string()),
+                Some(field) => capitalize(field),
                 None => format!("Field{}", i), // Idents can't start with numbers.
             }
         );
@@ -55,7 +59,7 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
         let field_generic_name = format_ident!(
             "Field{}",
             match &field.ident {
-                Some(field) => capitalize(&field.to_string()),
+                Some(field) => capitalize(field),
                 None => format!("{}", i),
             }
         );
@@ -149,7 +153,7 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
             .map(|(j, (g, f))| if i == j {
                 // FIXME: dedup this logic.
                 let field_name = format_ident!("{}", match &f.ident {
-                    Some(field) => capitalize(&field.to_string()),
+                    Some(field) => capitalize(field),
                     None => format!("Field{}", i),
                 });
                 let f = format_ident!("{}Unset", field_name);
@@ -161,7 +165,7 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
         let set_generics = set_fields_generics
             .iter().zip(input.fields.iter()).enumerate().map(|(j, (g, f))| if i == j {
             let field_name = format_ident!("{}", match &f.ident {
-                Some(field) => capitalize(&field.to_string()),
+                Some(field) => capitalize(field),
                 None => format!("Field{}", i),
             });
             let f = format_ident!("{}Set", field_name);
