@@ -63,8 +63,8 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
         let unset_field_generic_name = format_ident!("{}Unset", field_name);
 
         let default_attr = field.attrs.iter().find_map(|attr| {
-            if attr.path.is_ident("default") {
-                Some(attr.tokens.is_empty())
+            if attr.path().is_ident("default") {
+                Some(attr.to_token_stream().is_empty())
             } else {
                 None
             }
@@ -230,9 +230,9 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
         };
         f.attrs
             .iter()
-            .find(|attr| attr.path.is_ident("default"))
+            .find(|attr| attr.path().is_ident("default"))
             .map(|attr| {
-                let default = &attr.tokens;
+                let default = attr.to_token_stream();
                 if default.is_empty() {
                     quote!(builder.#field(::std::default::Default::default());)
                 } else {
