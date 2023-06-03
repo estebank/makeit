@@ -131,7 +131,6 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
                 (quote!(#i), format_ident!("set_{}", i))
             }
         };
-        let inner_method_name = format_ident!("inner_{}", method_name);
         let decl_generics = set_fields_generics
             .iter()
             .enumerate()
@@ -153,7 +152,7 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
                         }
                     );
                     let f = format_ident!("{}Unset", field_name);
-                    quote!(#f)
+                    quote!(#mod_name::#f)
                 } else {
                     quote!(#g)
                 }
@@ -173,7 +172,7 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
                         }
                     );
                     let f = format_ident!("{}Set", field_name);
-                    quote!(#f)
+                    quote!(#mod_name::#f)
                 } else {
                     quote!(#g)
                 }
@@ -182,19 +181,14 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
         let ty = &f.ty;
         quote! {
             impl #decl_generics #builder_name #unset_generics #where_clause {
-                #[must_use]
                 pub fn #method_name(mut self, value: #ty) -> #builder_name #set_generics {
-                    self.#inner_method_name(value);
-
-                    unsafe { ::core::mem::transmute(self) }
-                }
-
-                fn #inner_method_name(&mut self, value: #ty) {
                     let inner = self.inner.as_mut_ptr();
-                    // We know that `inner` is a valid pointer that we can write to.
+                    // Safety: We know that `inner` is a valid pointer that we can write to.
                     unsafe {
                         ::core::ptr::addr_of_mut!((*inner).#field).write(value);
                     }
+
+                    unsafe { ::core::mem::transmute(self) }
                 }
             }
         }
@@ -274,6 +268,8 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
             }
         }
 
+        #(#setters)*
+
         #[allow(non_snake_case)]
         #[deny(unused_must_use, clippy::pedantic)]
         mod #mod_name {
@@ -291,8 +287,6 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
                     unsafe { self.unsafe_build() }
                 }
             }
-
-            #(#setters)*
 
             impl #constrained_generics #builder_name #use_generics #where_clause {
                 #(#field_ptr_methods)*
