@@ -29,6 +29,8 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
         // Add a trailing comma to be able to add generics after it.
         struct_generics.extend(Some(quote!(,)));
     }
+
+    // TODO: Use with_capacity where possible.
     // The type parameter names representing each field of the type being built.
     let mut set_fields_generics = vec![];
     // The type names representing fields that have been initialized.
