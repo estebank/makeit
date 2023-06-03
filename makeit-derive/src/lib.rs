@@ -122,7 +122,6 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
     //   fn set_<field_name>(self, value: <field_type>) -> <Type>Builder
     //
     let setters = input.fields.iter().enumerate().map(|(i, f)| {
-
         let (field, method_name) = match &f.ident {
             Some(field) => (quote!(#field), format_ident!("set_{}", field)),
             None => {
@@ -242,11 +241,7 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
     // Construct the params for the `impl` item that provides the `build` method. Normally it would
     // be straightforward: you just specify that all the type params corresponding to fields are
     // set to the `Set` state, but that doesn't account for defaulted type params.
-    let build_generics = if buildable_generics.is_empty() {
-        quote!(<#struct_generics>)
-    } else {
-        quote!(<#struct_generics #(#buildable_generics),*>)
-    };
+    let build_generics = quote!(<#struct_generics #(#buildable_generics),*>);
     let build_use_generics = quote!(<#use_struct_generics #(#buildable_generics_use),*>);
 
     let builder_assoc_type = quote! {
