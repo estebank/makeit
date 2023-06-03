@@ -1,8 +1,7 @@
 use proc_macro::TokenStream;
 use proc_macro2::Ident;
 use quote::{format_ident, quote, quote_spanned, ToTokens};
-use syn::spanned::Spanned;
-use syn::{GenericParam, ItemStruct, Visibility};
+use syn::{spanned::Spanned, GenericParam, ItemStruct};
 
 fn capitalize(ident: &Ident) -> String {
     let ident = ident.to_string();
@@ -213,12 +212,7 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
         }
     });
 
-    let vis = match &input.vis {
-        // For private `struct`s we need to change the visibility of their builders to be
-        // accessible from their scope without leaking as `pub`.
-        Visibility::Inherited => quote!(pub(super)),
-        vis => quote!(#vis),
-    };
+    let vis = &input.vis;
 
     let defaults = input.fields.iter().enumerate().filter_map(|(i, f)| {
         let field = match &f.ident {
@@ -252,17 +246,17 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
     };
 
     let output = quote! {
+        #[must_use]
+        #[repr(transparent)]
+        #vis struct #builder_name #constrained_generics #where_clause {
+            inner: ::core::mem::MaybeUninit<#struct_name<#use_struct_generics>>,
+            __fields: ::core::marker::PhantomData<(#(#set_fields_generics),*)>,
+        }
+
         #[allow(non_snake_case)]
         #[deny(unused_must_use, clippy::pedantic)]
         mod #mod_name {
             use super::*;
-
-            #[must_use]
-            #[repr(transparent)]
-            #vis struct #builder_name #constrained_generics #where_clause {
-                inner: ::core::mem::MaybeUninit<#struct_name<#use_struct_generics>>,
-                __fields: ::core::marker::PhantomData<(#(#set_fields_generics),*)>,
-            }
 
             #(pub struct #all_set;)*
             #(pub struct #all_unset;)*
