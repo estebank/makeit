@@ -214,7 +214,7 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
     });
 
     let vis = match &input.vis {
-        // For private `struct`s we need to change teh visibility of their builders to be
+        // For private `struct`s we need to change the visibility of their builders to be
         // accessible from their scope without leaking as `pub`.
         Visibility::Inherited => quote!(pub(super)),
         vis => quote!(#vis),
