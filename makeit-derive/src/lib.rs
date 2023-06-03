@@ -1,9 +1,6 @@
-#[macro_use]
-extern crate quote;
-
 use proc_macro::TokenStream;
 use proc_macro2::Ident;
-use quote::ToTokens;
+use quote::{format_ident, quote, quote_spanned, ToTokens};
 use syn::spanned::Spanned;
 use syn::{GenericParam, ItemStruct, Visibility};
 
