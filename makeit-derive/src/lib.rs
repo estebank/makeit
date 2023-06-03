@@ -135,36 +135,49 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
         let decl_generics = set_fields_generics
             .iter()
             .enumerate()
-            .filter(|(j, _)| i!=*j)
+            .filter(|(j, _)| i != *j)
             .map(|(_, f)| f);
         let decl_generics = quote!(<#struct_generics #(#decl_generics),*>);
         let unset_generics = set_fields_generics
             .iter()
             .zip(input.fields.iter())
             .enumerate()
-            .map(|(j, (g, f))| if i == j {
-                // FIXME: dedup this logic.
-                let field_name = format_ident!("{}", match &f.ident {
-                    Some(field) => capitalize(field),
-                    None => format!("Field{}", i),
-                });
-                let f = format_ident!("{}Unset", field_name);
-                quote!(#f)
-            } else {
-                quote!(#g)
+            .map(|(j, (g, f))| {
+                if i == j {
+                    // FIXME: dedup this logic.
+                    let field_name = format_ident!(
+                        "{}",
+                        match &f.ident {
+                            Some(field) => capitalize(field),
+                            None => format!("Field{}", i),
+                        }
+                    );
+                    let f = format_ident!("{}Unset", field_name);
+                    quote!(#f)
+                } else {
+                    quote!(#g)
+                }
             });
         let unset_generics = quote!(<#use_struct_generics #(#unset_generics),*>);
         let set_generics = set_fields_generics
-            .iter().zip(input.fields.iter()).enumerate().map(|(j, (g, f))| if i == j {
-            let field_name = format_ident!("{}", match &f.ident {
-                Some(field) => capitalize(field),
-                None => format!("Field{}", i),
+            .iter()
+            .zip(input.fields.iter())
+            .enumerate()
+            .map(|(j, (g, f))| {
+                if i == j {
+                    let field_name = format_ident!(
+                        "{}",
+                        match &f.ident {
+                            Some(field) => capitalize(field),
+                            None => format!("Field{}", i),
+                        }
+                    );
+                    let f = format_ident!("{}Set", field_name);
+                    quote!(#f)
+                } else {
+                    quote!(#g)
+                }
             });
-            let f = format_ident!("{}Set", field_name);
-            quote!(#f)
-        } else {
-            quote!(#g)
-        });
         let set_generics = quote!(<#use_struct_generics #(#set_generics),*>);
         let ty = &f.ty;
         quote! {
@@ -172,13 +185,8 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
                 #[must_use]
                 pub fn #method_name(mut self, value: #ty) -> #builder_name #set_generics {
                     self.#inner_method_name(value);
-                    // We do the following instead of `::core::mem::transmute(self)` here
-                    // because we can't `transmute` on fields that involve generics.
-                    let ptr = &self as *const #builder_name #unset_generics as *const #builder_name #set_generics;
-                    ::core::mem::forget(self);
-                    unsafe {
-                        ptr.read()
-                    }
+
+                    unsafe { ::core::mem::transmute(self) }
                 }
 
                 fn #inner_method_name(&mut self, value: #ty) {
