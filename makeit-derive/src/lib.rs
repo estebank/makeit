@@ -19,13 +19,16 @@ fn capitalize(mut s: &str) -> String {
 pub fn derive_builder(input: TokenStream) -> TokenStream {
     let input: ItemStruct = syn::parse(input).unwrap();
     let struct_name = &input.ident;
-    // You can't accuse me of being original. 🤷‍♂️
     let builder_name = format_ident!("{}Builder", input.ident);
     // We'll nest the entirety of the builder's helper types in a private module so that they don't
     // leak into the user's scope.
     let mod_name = format_ident!("{}Fields", builder_name);
 
-    let struct_generics = input.generics.params.iter().collect::<Vec<_>>();
+    let mut struct_generics = input.generics.params.to_token_stream();
+    if !input.generics.params.is_empty() {
+        // Add a trailing comma to be able to add generics after it.
+        struct_generics.extend(Some(quote!(,)));
+    }
     // The type parameter names representing each field of the type being built.
     let mut set_fields_generics = vec![];
     // The type names representing fields that have been initialized.
@@ -92,33 +95,27 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
         .map(|param| match param {
             GenericParam::Type(p) => {
                 let ident = &p.ident;
-                quote!(#ident)
+                quote!(#ident,)
             }
             GenericParam::Lifetime(p) => {
                 let lt = &p.lifetime;
-                quote!(#lt)
+                quote!(#lt,)
             }
             GenericParam::Const(p) => {
                 let ident = &p.ident;
-                quote!(#ident)
+                quote!(#ident,)
             }
         })
-        .collect::<Vec<_>>();
+        .collect::<proc_macro2::TokenStream>();
 
-    let comma = if use_struct_generics.is_empty() {
-        quote!()
-    } else {
-        quote!(,)
-    };
-
-    let constrained_generics = quote!(<#(#struct_generics),* #comma #(#set_fields_generics),*>);
+    let constrained_generics = quote!(<#struct_generics #(#set_fields_generics),*>);
     let where_clause = &input.generics.where_clause;
     let where_clause = if where_clause.is_some() {
         quote!(#where_clause, #(#default_where_clauses),*)
     } else {
         quote!(where #(#default_where_clauses),*)
     };
-    let use_generics = quote!(<#(#use_struct_generics),* #comma #(#set_fields_generics),*>);
+    let use_generics = quote!(<#use_struct_generics #(#set_fields_generics),*>);
 
     // Construct each of the setter methods. These desugar roughly to the following signature:
     //
@@ -139,7 +136,7 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
             .enumerate()
             .filter(|(j, _)| i!=*j)
             .map(|(_, f)| f);
-        let decl_generics = quote!(<#(#struct_generics),* #comma #(#decl_generics),*>);
+        let decl_generics = quote!(<#struct_generics #(#decl_generics),*>);
         let unset_generics = set_fields_generics
             .iter()
             .zip(input.fields.iter())
@@ -155,7 +152,7 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
             } else {
                 quote!(#g)
             });
-        let unset_generics = quote!(<#(#use_struct_generics),* #comma #(#unset_generics),*>);
+        let unset_generics = quote!(<#use_struct_generics #(#unset_generics),*>);
         let set_generics = set_fields_generics
             .iter().zip(input.fields.iter()).enumerate().map(|(j, (g, f))| if i == j {
             let field_name = format_ident!("{}", match &f.ident {
@@ -167,7 +164,7 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
         } else {
             quote!(#g)
         });
-        let set_generics = quote!(<#(#use_struct_generics),* #comma #(#set_generics),*>);
+        let set_generics = quote!(<#use_struct_generics #(#set_generics),*>);
         let ty = &f.ty;
         quote! {
             impl #decl_generics #builder_name #unset_generics #where_clause {
@@ -245,22 +242,15 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
     // Construct the params for the `impl` item that provides the `build` method. Normally it would
     // be straightforward: you just specify that all the type params corresponding to fields are
     // set to the `Set` state, but that doesn't account for defaulted type params.
-    let build_generics = input.generics.params.iter().collect::<Vec<_>>();
     let build_generics = if buildable_generics.is_empty() {
-        quote!(<#(#build_generics),*>)
+        quote!(<#struct_generics>)
     } else {
-        let comma = if build_generics.is_empty() {
-            quote!()
-        } else {
-            quote!(,)
-        };
-        quote!(<#(#build_generics),* #comma #(#buildable_generics),*>)
+        quote!(<#struct_generics #(#buildable_generics),*>)
     };
-    let build_use_generics =
-        quote!(<#(#use_struct_generics),* #comma #(#buildable_generics_use),*>);
+    let build_use_generics = quote!(<#use_struct_generics #(#buildable_generics_use),*>);
 
     let builder_assoc_type = quote! {
-        type Builder = #builder_name<#(#use_struct_generics),* #comma #(#all_unset),*>;
+        type Builder = #builder_name<#use_struct_generics #(#all_unset),*>;
     };
 
     let input = quote! {
@@ -272,14 +262,14 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
             #[must_use]
             #[repr(transparent)]
             #vis struct #builder_name #constrained_generics #where_clause {
-                inner: ::core::mem::MaybeUninit<#struct_name<#(#use_struct_generics),*>>,
+                inner: ::core::mem::MaybeUninit<#struct_name<#use_struct_generics>>,
                 __fields: ::core::marker::PhantomData<(#(#set_fields_generics),*)>,
             }
 
             #(pub struct #all_set;)*
             #(pub struct #all_unset;)*
 
-            impl<#(#struct_generics),*> ::makeit::Buildable for #struct_name <#(#use_struct_generics),*>
+            impl<#struct_generics> ::makeit::Buildable for #struct_name <#use_struct_generics>
             #where_clause
             {
                 #builder_assoc_type
@@ -303,7 +293,7 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
             impl #build_generics #builder_name #build_use_generics #where_clause {
                 /// Finalize the builder.
                 #[must_use]
-                pub fn build(self) -> #struct_name<#(#use_struct_generics),*> {
+                pub fn build(self) -> #struct_name<#use_struct_generics> {
                     // This method is only callable if all of the fields have been initialized, making
                     // the underlying value at `inner` correctly formed.
                     unsafe { self.unsafe_build() }
@@ -323,7 +313,7 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
                 /// You're dealing with `MaybeUninit`. If you have to research what that is, you don't
                 /// want this.
                 #[must_use]
-                pub unsafe fn maybe_uninit(self) -> ::core::mem::MaybeUninit<#struct_name<#(#use_struct_generics),*>> {
+                pub unsafe fn maybe_uninit(self) -> ::core::mem::MaybeUninit<#struct_name<#use_struct_generics>> {
                     self.inner
                 }
 
@@ -331,7 +321,7 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
                 /// of using the type-safe builder. It is your responsibility to ensure that
                 /// all fields have been set before doing this.
                 #[must_use]
-                pub unsafe fn unsafe_build(self) -> #struct_name<#(#use_struct_generics),*> {
+                pub unsafe fn unsafe_build(self) -> #struct_name<#use_struct_generics> {
                     self.inner.assume_init()
                 }
             }
