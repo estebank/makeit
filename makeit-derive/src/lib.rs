@@ -233,12 +233,8 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
             syn::Meta::List(syn::MetaList { path, tokens, .. }) if path.is_ident("default") => {
                 let mut default_iter = tokens.clone().into_iter();
                 let default = match [default_iter.next(), default_iter.next()] {
-                    [Some(proc_macro2::TokenTree::Group(group)), None]
-                        if group.delimiter() == proc_macro2::Delimiter::Parenthesis =>
-                    {
-                        group.stream()
-                    }
-                    _ => syn::Error::new_spanned(tokens, "expected `#[default(…)]`")
+                    [Some(proc_macro2::TokenTree::Literal(_)), None] => tokens.clone(),
+                    _ => syn::Error::new_spanned(tokens, "Expected `#[default(…)]`")
                         .into_compile_error(),
                 };
                 Some(quote!(builder.#field(#default);))
