@@ -1,5 +1,5 @@
 #![deny(unused_must_use, clippy::pedantic)]
-use makeit::{Buildable, Builder};
+use makeit::Builder;
 
 #[derive(Builder)]
 struct Bar {

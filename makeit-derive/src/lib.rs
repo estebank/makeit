@@ -214,6 +214,7 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
 
     let vis = &input.vis;
 
+    // TODO: Set defaults on build.
     let defaults = input.fields.iter().enumerate().filter_map(|(i, f)| {
         let field = match &f.ident {
             Some(field) => format_ident!("inner_set_{}", field),
@@ -241,16 +242,28 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
     let build_generics = quote!(<#struct_generics #(#buildable_generics),*>);
     let build_use_generics = quote!(<#use_struct_generics #(#buildable_generics_use),*>);
 
-    let builder_assoc_type = quote! {
-        type Builder = #builder_name<#use_struct_generics #(#all_unset),*>;
-    };
-
     let output = quote! {
         #[must_use]
         #[repr(transparent)]
         #vis struct #builder_name #constrained_generics #where_clause {
             inner: ::core::mem::MaybeUninit<#struct_name<#use_struct_generics>>,
             __fields: ::core::marker::PhantomData<(#(#set_fields_generics),*)>,
+        }
+
+        impl<#struct_generics> #struct_name <#use_struct_generics>
+        #where_clause
+        {
+            /// Returns a builder that lets you initialize `Self` field by field in a zero-cost,
+            /// type-safe manner.
+            #[allow(unused_parens)]
+            fn builder() -> #builder_name<#use_struct_generics #(#mod_name::#all_unset),*> {
+                #builder_name {
+                    inner: unsafe {
+                        ::core::mem::MaybeUninit::uninit()
+                    },
+                    __fields: ::core::marker::PhantomData,
+                }
+            }
         }
 
         #[allow(non_snake_case)]
@@ -260,27 +273,6 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
 
             #(pub struct #all_set;)*
             #(pub struct #all_unset;)*
-
-            impl<#struct_generics> ::makeit::Buildable for #struct_name <#use_struct_generics>
-            #where_clause
-            {
-                #builder_assoc_type
-
-                /// Returns a builder that lets you initialize `Self` field by field in a zero-cost,
-                /// type-safe manner.
-                #[must_use]
-                #[allow(unused_parens)]
-                fn builder() -> Self::Builder {
-                    let mut builder = #builder_name {
-                        inner: unsafe {
-                            ::core::mem::MaybeUninit::<Self>::uninit()
-                        },
-                        __fields: ::core::marker::PhantomData,
-                    };
-                    #(#defaults)*
-                    builder
-                }
-            }
 
             impl #build_generics #builder_name #build_use_generics #where_clause {
                 /// Finalize the builder.
