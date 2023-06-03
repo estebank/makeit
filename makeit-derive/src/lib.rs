@@ -79,7 +79,7 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
             buildable_generics_use.push(field_generic_name.clone());
             if default_is_empty {
                 default_where_clauses
-                    .push(quote_spanned!(ty.span() => #ty: ::std::default::Default));
+                    .push(quote_spanned!(ty.span() => #ty: ::core::default::Default));
             }
         } else {
             buildable_generics_use.push(set_field_generic_name.clone());
@@ -227,7 +227,7 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
         };
         f.attrs.iter().find_map(|attr| match &attr.meta {
             syn::Meta::Path(path) if path.is_ident("default") => {
-                Some(quote!(builder.#field(::std::default::Default::default());))
+                Some(quote!(builder.#field(::core::default::Default::default());))
             }
             syn::Meta::List(syn::MetaList { path, tokens, .. }) if path.is_ident("default") => {
                 let mut default_iter = tokens.clone().into_iter();
@@ -251,7 +251,7 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
         type Builder = #builder_name<#use_struct_generics #(#all_unset),*>;
     };
 
-    let input = quote! {
+    let output = quote! {
         #[allow(non_snake_case)]
         #[deny(unused_must_use, clippy::pedantic)]
         mod #mod_name {
@@ -301,7 +301,6 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
             #(#setters)*
 
             impl #constrained_generics #builder_name #use_generics #where_clause {
-
                 #(#field_ptr_methods)*
 
                 /// HERE BE DRAGONS!
@@ -326,5 +325,5 @@ pub fn derive_builder(input: TokenStream) -> TokenStream {
         }
     };
 
-    TokenStream::from(input.into_token_stream())
+    TokenStream::from(output.into_token_stream())
 }
